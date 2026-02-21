@@ -1,0 +1,17 @@
+# 忽略你的配置文件（非常重要，防止密码等敏感信息泄露）
+settings.ini
+
+# 忽略所有 Excel 文件
+*.xlsx
+*.xls
+*.csv
+
+# 忽略你存放 Excel 数据专用的文件夹
+excel_data/
+
+# 忽略 Python 运行时自动生成的缓存文件和虚拟环境
+__pycache__/
+*.pyc
+venv/
+.venv/
+.idea/
