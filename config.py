@@ -1,35 +1,63 @@
-# config.py
+"""
+ValkyrieEngine 全局配置解析模块
+功能：负责在程序启动时定位并读取外部的 settings.ini 配置文件。
+该模块内置了环境自适应逻辑，确保无论是在源码环境还是打包后的独立可执行文件 (.exe) 环境中，
+均能准确读取同级目录下的配置文件，并将配置参数映射为全局变量，供其他业务模块调用。
+"""
+
 import configparser
 import os
 import sys
 
-# 1. 确定 settings.ini 的绝对路径
-# 【终极防翻车技巧】这里加上了应对未来打包 exe 的特殊判断。
-# 如果被打包成了 exe，sys.frozen 就会生效，它会去 exe 所在的文件夹找 ini；
-# 如果是在 PyCharm 里运行，它就去当前代码所在的文件夹找 ini。
+# =========================================================
+# 1. 配置文件路径解析与环境自适应
+# =========================================================
+# 判定当前程序的运行环境状态：
+# getattr(sys, 'frozen', False) 用于检测程序是否被 PyInstaller 打包。
+# 若为 True（处于 exe 运行环境），基准路径设定为 .exe 文件所在的绝对物理目录；
+# 若为 False（处于源码运行环境），基准路径设定为当前 config.py 脚本所在的目录。
 if getattr(sys, 'frozen', False):
     base_path = os.path.dirname(sys.executable)
 else:
     base_path = os.path.dirname(os.path.abspath(__file__))
 
+# 拼接得出配置文件的最终绝对路径
 ini_path = os.path.join(base_path, 'settings.ini')
 
-# 2. 检查配置文件在不在，不在直接报错罢工
-if not os.path.exists(ini_path):
-    raise FileNotFoundError(f"❌ 找不到配置文件！请确保 {ini_path} 文件存在。")
 
-# 3. 召唤解析器，读取 ini 文件
-# encoding='utf-8' 极其关键，防止中文注释或中文路径变成乱码报错
+# =========================================================
+# 2. 配置文件校验与加载
+# =========================================================
+# 前置安全校验：若配置文件缺失，则直接抛出文件未找到异常，阻止引擎启动。
+if not os.path.exists(ini_path):
+    raise FileNotFoundError(f"[系统异常] 缺失核心配置文件，请确保 {ini_path} 文件存在。")
+
+# 初始化配置解析器实例
 config = configparser.ConfigParser()
+
+# 读取配置文件数据
+# 必须显式指定 encoding='utf-8'，以防止 Windows 系统默认编码读取中文注释或中文路径时引发解码崩溃。
 config.read(ini_path, encoding='utf-8')
 
-# 4. 把读出来的值，赋给原本的全局变量
+
+# =========================================================
+# 3. 全局配置变量映射 (动态配置项)
+# =========================================================
+# 网络环境配置
 ERP_URL = config.get('Network', 'ERP_URL')
+
+# 账户鉴权配置
 USERNAME = config.get('Account', 'USERNAME')
 PASSWORD = config.get('Account', 'PASSWORD')
 
+# 数据 I/O 路径配置
 SOURCE_EXCEL_PATH = config.get('Files', 'SOURCE_EXCEL_PATH')
 OUTPUT_EXCEL_NAME = config.get('Files', 'OUTPUT_EXCEL_NAME')
 
-# 这个通常不变，就不用独立出去了，依然留在代码里
+
+# =========================================================
+# 4. 内部静态常量 (非动态配置项)
+# =========================================================
+# 指定目标 Excel 表格中用于检索的唯一标识列的表头名称。
+# 由于此设定属于业务强相关且变动频率极低的基础规则，因此保留在代码内部，不暴露给外部用户修改。
 COLUMN_NAME_CODE = "项目编号"
