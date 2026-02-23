@@ -1,5 +1,6 @@
 import time
 import erp_construction_bidding  # 导入页面初始化模块，用于调用其内置的页面重置功能
+import data_excel  # [V2.0.0 新增] 引入数据 I/O 模块，用于实现实时自动存档机制
 
 
 def get_empty_record(code, status):
@@ -52,24 +53,34 @@ def extract_detail_data(detail_tab, code):
             # 作用：这种强约束可以防止误抓页面上其他包含该字段文本的无关大模块。
             label_td = detail_tab.ele(f'tag:td@@class=td_normal_title@@text():{field}', timeout=3)
 
+            # [V2.0.0 健壮性增强] 防御性编程：确保表头真实存在后再进行相对偏移
+            if not label_td:
+                print(f"[数据提取] 警告：页面中未找到表头 [{field}]")
+                record[field] = "抓取缺失"
+                record["状态"] = "部分字段异常"
+                continue
+
             # 【定位策略 2：右侧数据宽泛匹配 (相对节点偏移)】
             # 逻辑：获取上一步定位到的 label_td 节点的下一个兄弟节点 (next sibling)，限定其为 <td> 标签。
             # 作用：因为 ERP 系统部分数据单元格缺失规范的 class 属性，所以放弃精确匹配 class，
             # 只要它是紧随表头之后的单元格，即认定为包含目标金额的数据节点。
-            value_td = label_td.next('tag:td')
+            value_td = label_td.next('tag:td', timeout=2)
 
-            # 提取数据节点内的纯文本内容
-            raw_text = value_td.text
+            if value_td:
+                # 提取数据节点内的纯文本内容
+                raw_text = value_td.text
 
-            # 【数据清洗逻辑】
-            # 将系统底层自带的换行符 (\n) 与制表符 (\t) 替换为空字符串，最后用 strip() 移除首尾残留的空白字符。
-            clean_text = raw_text.replace('\n', '').replace('\t', '').strip()
-
-            record[field] = clean_text
+                # 【数据清洗逻辑】
+                # 将系统底层自带的换行符 (\n) 与制表符 (\t) 替换为空字符串，最后用 strip() 移除首尾残留的空白字符。
+                clean_text = raw_text.replace('\n', '').replace('\t', '').strip()
+                record[field] = clean_text
+            else:
+                record[field] = "数据节点缺失"
+                record["状态"] = "部分字段异常"
 
         except Exception as e:
             # 容错处理：若该页面缺失某个字段（如无绿化费），或页面结构发生改变，记录异常并不中断程序
-            print(f"[数据提取] 字段解析缺失或失败: {field}")
+            print(f"[数据提取] 字段解析异常: {field}，底层错误: {e}")
             record[field] = "抓取异常"
             record["状态"] = "部分字段异常"
 
@@ -80,7 +91,7 @@ def search_and_process_single(page, search_tab, code):
     """
     单一项目检索与状态判定模块
     功能：处理目标查询页面的残留状态，输入目标编号发起检索，并根据检索结果的数量
-    进行条件分支处理（未发包、待确认、精确命中）。
+    进行条件分支处理（未发包/工程维度发包、待确认、精确命中）。
     """
     try:
         # ==========================================
@@ -126,8 +137,8 @@ def search_and_process_single(page, search_tab, code):
         result_count = len(results)
 
         if result_count == 0:
-            print("[业务判定] 数据库未返回匹配记录，状态标记：未发包。")
-            return get_empty_record(code, "未发包")
+            print("[业务判定] 数据库未返回匹配记录，状态标记：未发包/工程维度发包。")
+            return get_empty_record(code, "未发包/工程维度发包")
 
         elif result_count > 1:
             print(f"[业务判定] 检测到 {result_count} 条同名记录，为避免数据混淆，状态标记：待确认。")
@@ -138,14 +149,19 @@ def search_and_process_single(page, search_tab, code):
             # 触发唯一记录的点击事件，打开详情页
             results[0].click()
 
-            # 获取最新弹出的详情页句柄，交由 extract_detail_data 模块处理
+            # 给底层系统留出响应打开新标签页的微小时间差
+            page.wait(1)
+
+            # 获取最新弹出的详情页句柄
             detail_tab = page.latest_tab
-            final_record = extract_detail_data(detail_tab, code)
 
-            # 数据提取完成，释放详情页资源
-            detail_tab.close()
-
-            return final_record
+            # [V2.0.0 健壮性增强] 引入 try...finally 确保即使提取报错也能强制销毁标签页，防止内存溢出
+            try:
+                final_record = extract_detail_data(detail_tab, code)
+                return final_record
+            finally:
+                print(f"[资源回收] 正在关闭编号 [{code}] 的详情层对象。")
+                detail_tab.close()
 
     except Exception as e:
         # 捕获检索及 DOM 交互过程中引发的系统级异常（如断网、页面彻底卡死无响应）
@@ -194,6 +210,16 @@ def run_data_cycle(page, search_tab, codes_list):
                     # 保留业务日志，记录错误状态，确保总体进度不受单一数据影响
                     all_results.append(get_empty_record(code, "网页连续卡死失败"))
 
+        # ======================================================================
+        # 【V2.0.0 新增：极致护航级实时自动存档机制】
+        # 垂直水平对齐说明：本行代码与上面的 for attempt 循环对齐。
+        # 逻辑：每当一个编号经过 1~2 次重试处理完毕（无论结果是成功还是失败标记），
+        # 立即将当前内存中已搜集的 all_results 序列化并覆盖写入硬盘。
+        # 作用：确保即便程序在下一秒崩溃，之前的所有劳动成果都已安全落盘，绝不白跑。
+        # ======================================================================
+        print(f"[自动存档] 正在执行结算进度同步，当前已安全保存 {len(all_results)} 条业务记录...")
+        data_excel.save_data_to_excel(all_results)
+
     return all_results
 
 
@@ -212,7 +238,7 @@ if __name__ == '__main__':
     # 定义包含各类边界情况的测试用例列表
     test_codes = [
         "D1251420211",  # 预期输出：精确抓取数据
-        "D9999999999",  # 预期输出：未发包
+        "D9999999999",  # 预期输出：未发包/工程维度发包
         "D1251420013"  # 预期输出：另一条正常数据
     ]
 

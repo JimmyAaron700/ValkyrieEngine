@@ -1,11 +1,14 @@
 """
-ValkyrieEngine 数据 I/O 与预处理模块
+ValkyrieEngine 数据 I/O 与预处理模块 (V2.0.0 稳定护航版)
 功能：负责与外部 Excel 文件进行交互。包含从源文件读取并清洗项目编号（输入），
 以及将内存中的结构化字典列表序列化并导出为最终的报表（输出）。
+新增：缺失值 (NaN) 内存安全过滤机制与文件占用时的自动降级保存策略。
 """
 
 import pandas as pd
 import config
+import time
+import os
 
 
 def is_valid_erp_code(code):
@@ -13,6 +16,13 @@ def is_valid_erp_code(code):
     数据格式校验模块
     功能：对传入的原始业务编号进行字符串格式化与合法性验证。
     """
+    # [V2.0.0 健壮性升级] 内存安全拦截：
+    # 上游表格中由于合并单元格或错误录入导致的完全空值，在 Pandas 中会被解析为 float 类型的 NaN。
+    # 若直接对其调用 str().strip() 会变成字面量 "nan"，从而引发后续逻辑的难以排查的隐患。
+    # 此处利用 pd.isna() 进行前置拦截，静默清洗此类脏数据。
+    if pd.isna(code):
+        return False, ""
+
     # 数据清洗：将输入值强制转换为字符串类型，并调用 strip() 方法移除两端的空白字符（包含空格、制表符及换行符）。
     # 这一步能有效修复因人工录入表格时误敲空格导致的格式错误。
     code_str = str(code).strip()
@@ -64,7 +74,7 @@ def load_and_clean_data():
             valid_codes.append(clean_code)
         else:
             invalid_count += 1
-            print(f"[数据清洗] 拦截非标准格式编号：[{raw_code}]，已从队列中剔除。")
+            print(f"[数据清洗] 拦截非标准格式或空值编号：[{raw_code}]，已从队列中静默剔除。")
 
     print(
         f"[数据输入] 清洗任务完成。源数据共 {len(raw_codes)} 条，保留有效数据 {len(valid_codes)} 条，剔除无效数据 {invalid_count} 条。")
@@ -99,9 +109,27 @@ def save_data_to_excel(data_list):
 
         print(f"[数据输出] 导出任务圆满成功，成果文件已保存至：{output_file}")
 
+    except PermissionError:
+        # [V2.0.0 健壮性升级] 防丢失降级保存策略：
+        # 极高频场景：业务人员在程序运行期间打开了 output.xlsx 查看历史数据且忘记关闭，
+        # 导致底层抛出 PermissionError（拒绝访问）。若不予处理，所有辛苦抓取的内存数据将随程序结束而灰飞烟灭。
+        # 此处触发降级策略：提取原文件名，在末尾动态追加时间戳后缀生成备份文件。
+        fallback_time = time.strftime("%Y%md_%H%M%S")
+        base_name, ext = os.path.splitext(output_file)
+        fallback_file = f"{base_name}_备份_{fallback_time}{ext}"
+
+        print(f"[系统警报] 目标文件 {output_file} 正被其他程序锁定，写入权限被拒绝！")
+        print(f"[数据抢救] 正在触发防丢失降级策略，将数据转存至安全副本：{fallback_file}")
+
+        try:
+            df.to_excel(fallback_file, index=False)
+            print(f"[数据输出] 抢救成功！请后续在备份文件中查看结算数据。")
+        except Exception as e2:
+            print(f"[系统异常] 灾难性错误：备份文件同样无法写入。错误详情：{e2}")
+
     except Exception as e:
-        # 捕获由于文件被占用导致写入权限拒绝的常见异常
-        print(f"[系统异常] 导出失败！请确认目标文件 {output_file} 未被其他程序打开。错误详情：{e}")
+        # 捕获其他非权限类的 I/O 异常（如磁盘空间满、路径非法等）
+        print(f"[系统异常] 序列化导出发生未预期错误。错误详情：{e}")
 
 
 # ---------------- 单独测试与调试入口 ----------------

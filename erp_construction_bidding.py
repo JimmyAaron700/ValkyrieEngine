@@ -43,6 +43,9 @@ def apply_search_conditions(tab):
     tab.ele('@title=结束', timeout=15).click()
     print("[参数配置] 已勾选 '结束' 状态...")
 
+    # [V2.0.0 回滚补充] 再次强制等待 1 秒，确保上一步点击引发的局部 AJAX 重绘完成
+    tab.wait(1)
+
     # 【定位与操作 2】：通过层级关系精准锁定特定按钮（防止误点）
     # 步骤 A (寻找父节点)：通过底层框架自定义属性 'data-criterion-key' 锁定“创建时间”的外部容器区块。
     # 这种 data- 属性通常是系统底层的业务标识，比 class 或 id 更稳定。
