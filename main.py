@@ -3,6 +3,10 @@ import data_excel
 import erp_login
 import erp_construction_bidding
 import erp_construction_bidding_data_extractor
+import erp_inventory
+import erp_inventory_data_extractor
+import erp_fundamental  # [V2.1.0 新增] 引入基础能力库，用于获取工程数量边界
+
 
 def get_run_mode():
     """
@@ -40,8 +44,9 @@ def feature_1_project_bidding():
         # 步骤 1：数据预处理
         # 调用 data_excel 模块，从配置文件指定的 Excel 中读取 ERP 项目编号。
         # 此步骤包含格式校验与清洗机制，剔除不符合规范的脏数据。
+        # 【V2.1.0 优化】使用依赖注入，传入功能1专属的输入路径
         print("\n[系统执行 1/5] 开始数据预处理...")
-        target_codes = data_excel.load_and_clean_data()
+        target_codes = data_excel.load_and_clean_data(config.F1_INPUT)
 
         # 数据校验拦截：若有效编号列表为空，则无后续执行必要，直接终止程序。
         if not target_codes:
@@ -65,14 +70,17 @@ def feature_1_project_bidding():
         # 调用 erp_data_extractor 模块，将清洗后的 target_codes 列表传入。
         # 模块内部将循环执行：输入编号 -> 检索 -> 判定结果唯一性 -> 进入详情页抓取数据 -> 关闭详情页。
         # 附带页面异常自愈机制，防止单次查询卡顿导致程序崩溃。
+        # 【V2.1.0 优化】传入功能1专属的输出路径，用于实时存档
         print("\n[系统执行 4/5] 开启自动化搜索与数据提取流程...")
-        final_results = erp_construction_bidding_data_extractor.run_data_cycle(page, search_tab, target_codes)
+        final_results = erp_construction_bidding_data_extractor.run_data_cycle(page, search_tab, target_codes,
+                                                                               config.F1_OUTPUT)
 
         # 步骤 5：成果导出与保存
         # 调用 data_excel 模块，将抓取产生的字典列表（包含成功数据及异常状态标记）
         # 转换为结构化的 DataFrame，并保存至配置文件指定的输出 Excel 路径。
+        # 【V2.1.0 优化】传入功能1专属的输出路径
         print("\n[系统执行 5/5] 数据提取完毕，正在导出结果文件...")
-        data_excel.save_data_to_excel(final_results)
+        data_excel.save_data_to_excel(final_results, config.F1_OUTPUT)
 
         print("\n" + "=" * 50)
         print("            模块 1 自动化处理任务执行完毕")
@@ -96,6 +104,80 @@ def feature_1_project_bidding():
             print("[系统维护] 底层浏览器进程已安全彻底销毁，内存已释放。")
 
 
+def feature_3_inventory_query():
+    """
+    功能模块 3：盘点情况查询 业务主程序 (V2.1.0 集成版)
+    功能：实现 Excel 读取 -> 基础能力库(获取工程数) -> 盘点业务库(嗅探状态) -> 结果导出的全链路闭环。
+    """
+    print("\n" + "=" * 50)
+    print("           开始执行 [模块 3：盘点情况查询]")
+    print("=" * 50)
+
+    page = None
+
+    try:
+        # 获取运行模式指令 (1 还是 2)
+        run_mode = get_run_mode()
+
+        # 步骤 1：数据预处理
+        # 调用 data_excel 模块，读取并清洗数据
+        print("\n[系统执行 1/5] 开始数据预处理...")
+        target_codes = data_excel.load_and_clean_data(config.F3_INPUT)
+
+        if not target_codes:
+            print("[提示] 源表格中未发现有效的 ERP 编号，程序终止运行。")
+            return
+
+        # 步骤 2：系统鉴权与登录
+        print("\n[系统执行 2/5] 启动浏览器并执行系统登录...")
+        page = erp_login.login_erp(run_mode)
+
+        # =========================================================
+        # [V2.1.0 新增] 步骤 3：调用基础能力库，获取精确边界
+        # =========================================================
+        # 逻辑：在进入具体的盘点业务页面之前，先去“项目流程工作台”把每个项目的“工程数”查清楚。
+        # 这里的 target_codes 是简单的字符串列表：['D123', 'D456']
+        print("\n[系统执行 3/5] 正在调用基础能力库(erp_fundamental)，获取精确工程数量...")
+
+        # 调用 fundamental 模块的批量查询功能
+        # 返回值 enriched_data 是一个字典列表：[{'项目编号': 'D123', '工程数': 3}, ...]
+        enriched_data = erp_fundamental.batch_get_engineering_counts(page, target_codes)
+
+        print(f"[系统反馈] 边界数据获取完毕，准备携带 {len(enriched_data)} 条精准数据进入盘点业务线...")
+
+        # 步骤 4：初始化查询环境 (盘点业务专属)
+        # 注意：fundamental 模块执行完后已经关闭了工作台标签页，此时 page 焦点在首页，可以直接导航。
+        print("\n[系统执行 4/5] 正在进入盘点查询界面并设置筛选条件...")
+        search_tab = erp_inventory.setup_search_environment(page)
+
+        # 步骤 5：核心数据提取循环 (传入 enriched_data 字典列表)
+        # 逻辑：我们将上一步获取到的带有“工程数”的字典列表传给提取器。
+        # 提取器会根据我们在 get_inventory_record 里预留的 known_count 接口，
+        # 智能地只扫描存在的工程后缀 (如只扫 _01, _02)，大大提升效率并消除歧义。
+        print("\n[系统执行 5/5] 开启工程维度定向雷达嗅探扫描...")
+        final_results = erp_inventory_data_extractor.run_data_cycle(
+            page,
+            search_tab,
+            enriched_data,  # <--- 这里传进去的就是字典列表啦！
+            config.F3_OUTPUT
+        )
+
+        print("\n" + "=" * 50)
+        print("           模块 3 [盘点情况查询] 任务圆满完成！")
+        print("=" * 50)
+
+    except Exception as e:
+        print("\n" + "!" * 50)
+        print(f"          [系统异常] 程序因以下错误终止运行：\n    {e}")
+        print("!" * 50)
+
+    finally:
+        if page is not None:
+            print("\n[系统维护] 正在执行浏览器生命周期终结与资源回收...")
+            page.quit()
+            print("[系统维护] 底层浏览器进程已安全彻底销毁，内存已释放。")
+
+
 def main_engine_hub():
     """
     ValkyrieEngine 主控路由中枢
@@ -109,7 +191,7 @@ def main_engine_hub():
         print("\n[主控中枢] 欢迎使用 ValkyrieEngine，请选择需要执行的业务功能：")
         print("  1. 中标金额查询（项目维度） [已上线]")
         print("  2. 中标金额查询（工程维度） [待开发]")
-        print("  3. 盘点情况查询 [待开发]")
+        print("  3. 盘点情况查询 [已上线]")
         print("  4. 结算情况查询 [待开发]")
         print("  5. 项目基础信息查询（ERP状态、总包、分包、项目经理） [待开发]")
         print("  6. 项目类别查询 [待开发]")
@@ -122,7 +204,12 @@ def main_engine_hub():
             feature_1_project_bidding()
             break  # 业务执行完毕后结束程序。如需持续运行，可删除此 break 返回主菜单
 
-        elif choice in ['2', '3', '4', '5', '6']:
+        elif choice == '3':
+            # 路由跳转：分配至功能 3 对应的业务线
+            feature_3_inventory_query()
+            break
+
+        elif choice in ['2', '4', '5', '6']:
             # 占位符：为后续开发预留的扩展接口
             print(f"\n[系统提示] 功能模块 {choice} 暂未上线，正在规划开发中，敬请期待...")
 

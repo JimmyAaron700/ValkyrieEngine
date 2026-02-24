@@ -39,13 +39,12 @@ def is_valid_erp_code(code):
         return False, code_str
 
 
-def load_and_clean_data():
+def load_and_clean_data(file_path):
     """
     数据输入与预处理模块
     功能：从配置文件指定的源 Excel 文件中提取目标列数据，逐条经过校验模块过滤，
     最终返回标准化且格式合法的项目编号列表。
     """
-    file_path = config.SOURCE_EXCEL_PATH
     col_name = config.COLUMN_NAME_CODE
 
     print("[数据输入] 正在读取并清洗源始数据表...")
@@ -83,7 +82,7 @@ def load_and_clean_data():
     return valid_codes
 
 
-def save_data_to_excel(data_list):
+def save_data_to_excel(data_list, output_file):
     """
     数据输出与序列化模块
     功能：将装载着业务处理结果的字典列表转换为结构化的二维数据表，并持久化保存为 Excel 文件。
@@ -93,7 +92,6 @@ def save_data_to_excel(data_list):
         print("[数据输出] 警告：输出队列为空，本次运行未生成任何结果文件。")
         return
 
-    output_file = config.OUTPUT_EXCEL_NAME
     print(f"\n[数据输出] 正在将 {len(data_list)} 条业务记录序列化并导出至：{output_file}")
 
     try:

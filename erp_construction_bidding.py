@@ -1,3 +1,8 @@
+"""
+ValkyrieEngine 页面初始化与环境导航模块 (功能1专属)
+功能：控制浏览器导航至“施工委托招标”页面，并完成筛选条件的初始化。
+"""
+
 def reset_and_back_to_home(page):
     """
     页面状态重置模块
@@ -56,6 +61,24 @@ def apply_search_conditions(tab):
     time_box.ele('@class=cancel', timeout=15).click()
     print("[参数配置] 已清除默认的 '创建时间' 限制...")
 
+    # ==========================================
+    # [V2.1.0 优化] 智能显式等待：防范首页大数据量加载造成的竞态条件
+    # ==========================================
+    print("[参数配置] 正在等待系统拉取全量历史施工委托数据，这可能需要较长时间...")
+    try:
+        # 【核心狙击逻辑】小郁提出的神级锚点：寻找申请单编号的通用前缀 "SR"
+        # 给系统 30 秒的极限宽容度，只要能嗅探到列表里有任意一个 SR，就说明转圈结束，列表渲染完毕！
+        tab.ele('text:SR', timeout=30)
+        print("[参数配置] 成功嗅探到 'SR' 编号，列表数据渲染完毕！准备移交控制权...")
+
+        # 为了极度安全，渲染完再给浏览器 1 秒钟的喘息时间，平复 DOM 树
+        tab.wait(1)
+    except Exception as e:
+        # 【V2.1.1 紧急修复】绝不能强制放行！果断抛出致命异常！
+        # 这个异常会被外层的 setup_search_environment 捕获，从而完美触发 reset_and_back_to_home 机制。
+        print(f"[系统警报] 致命超时：30秒内未检测到 'SR' 数据，网络严重阻塞！")
+        raise Exception("ListRenderTimeout: 列表渲染严重超时，拒绝执行后续脏数据抓取。")
+
 
 def setup_search_environment(page):
     """
@@ -92,7 +115,8 @@ def setup_search_environment(page):
 
         except Exception as e:
             # 异常捕获与日志输出：记录引发超时的具体节点错误信息
-            print(f"[系统警报] 第 {attempt} 次加载未响应，错误详情：{e}")
+            # 【完美联动】：apply_search_conditions 抛出的 ListRenderTimeout 会直接被这里接住！
+            print(f"[系统警报] 第 {attempt} 次加载未响应或渲染超时，错误详情：{e}")
 
             # 自愈逻辑分流：如果未达到最大重试上限，则调用重置模块清理页面；否则向主程序抛出致命异常。
             if attempt < max_try:

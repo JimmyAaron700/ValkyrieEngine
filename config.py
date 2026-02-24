@@ -50,9 +50,25 @@ ERP_URL = config.get('Network', 'ERP_URL')
 USERNAME = config.get('Account', 'USERNAME')
 PASSWORD = config.get('Account', 'PASSWORD')
 
-# 数据 I/O 路径配置
-SOURCE_EXCEL_PATH = config.get('Files', 'SOURCE_EXCEL_PATH')
-OUTPUT_EXCEL_NAME = config.get('Files', 'OUTPUT_EXCEL_NAME')
+# 数据 I/O 路径配置 - 批量映射各个功能的专属路径
+# 功能1
+F1_INPUT = config.get('Files', 'F1_INPUT', fallback='')
+F1_OUTPUT = config.get('Files', 'F1_OUTPUT', fallback='')
+# 功能2
+F2_INPUT = config.get('Files', 'F2_INPUT', fallback='')
+F2_OUTPUT = config.get('Files', 'F2_OUTPUT', fallback='')
+# 功能3
+F3_INPUT = config.get('Files', 'F3_INPUT', fallback='')
+F3_OUTPUT = config.get('Files', 'F3_OUTPUT', fallback='')
+# 功能4
+F4_INPUT = config.get('Files', 'F4_INPUT', fallback='')
+F4_OUTPUT = config.get('Files', 'F4_OUTPUT', fallback='')
+# 功能5
+F5_INPUT = config.get('Files', 'F5_INPUT', fallback='')
+F5_OUTPUT = config.get('Files', 'F5_OUTPUT', fallback='')
+# 功能6
+F6_INPUT = config.get('Files', 'F6_INPUT', fallback='')
+F6_OUTPUT = config.get('Files', 'F6_OUTPUT', fallback='')
 
 
 # =========================================================

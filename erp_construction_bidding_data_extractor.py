@@ -170,7 +170,7 @@ def search_and_process_single(page, search_tab, code):
         raise Exception("SearchTimeout")
 
 
-def run_data_cycle(page, search_tab, codes_list):
+def run_data_cycle(page, search_tab, codes_list, output_file):
     """
     批量数据检索主控循环模块
     功能：遍历待处理的编号列表，调用单次查询逻辑。包含应对页面级卡顿的自愈重启策略。
@@ -218,7 +218,7 @@ def run_data_cycle(page, search_tab, codes_list):
         # 作用：确保即便程序在下一秒崩溃，之前的所有劳动成果都已安全落盘，绝不白跑。
         # ======================================================================
         print(f"[自动存档] 正在执行结算进度同步，当前已安全保存 {len(all_results)} 条业务记录...")
-        data_excel.save_data_to_excel(all_results)
+        data_excel.save_data_to_excel(all_results, output_file)
 
     return all_results
 
@@ -239,7 +239,7 @@ if __name__ == '__main__':
     test_codes = [
         "D1251420211",  # 预期输出：精确抓取数据
         "D9999999999",  # 预期输出：未发包/工程维度发包
-        "D1251420013"  # 预期输出：另一条正常数据
+        "D1251420013"   # 预期输出：另一条正常数据
     ]
 
     # 执行批处理流程
