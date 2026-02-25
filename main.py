@@ -6,6 +6,8 @@ import erp_construction_bidding_data_extractor
 import erp_inventory
 import erp_inventory_data_extractor
 import erp_fundamental  # [V2.1.0 新增] 引入基础能力库，用于获取工程数量边界
+import erp_construction_bidding_01
+import erp_construction_bidding_data_extractor_01
 
 
 def get_run_mode():
@@ -104,6 +106,93 @@ def feature_1_project_bidding():
             print("[系统维护] 底层浏览器进程已安全彻底销毁，内存已释放。")
 
 
+def feature_2_engineering_bidding():
+    """
+    [V2.2.0 新增] 功能模块 2：中标金额查询（工程维度）业务主程序
+    流程：
+      1. Excel读取 -> 清洗得到项目编号
+      2. 登录 -> 启动浏览器
+      3. 基础库(fundamental) -> 获取每个项目的精确工程数 (enriched_data)
+      4. 导航 -> 进入“施工委托（招标）” -> 挂载筛选条件 -> 等待 SR 加载
+      5. 核心提取 -> 传入工程数，执行“超级字典”构建与多版本自适应抓取
+      6. 存档 -> 自动保存
+    """
+    print("\n" + "=" * 50)
+    print("       开始执行 [模块 2：中标金额查询（工程维度）]")
+    print("=" * 50)
+
+    page = None
+
+    try:
+        # [步骤 0] 获取运行模式指令
+        run_mode = get_run_mode()
+
+        # [步骤 1] 数据预处理
+        # 逻辑：读取配置文件中 F2_INPUT 指定的 Excel，提取 D 开头的项目编号
+        print("\n[系统执行 1/6] 开始数据预处理 (工程维度)...")
+        target_codes = data_excel.load_and_clean_data(config.F2_INPUT)
+
+        if not target_codes:
+            print("[提示] 源表格中未发现有效的 ERP 编号，程序终止运行。")
+            return
+
+        # [步骤 2] 系统鉴权与登录
+        print("\n[系统执行 2/6] 启动浏览器并执行系统登录...")
+        page = erp_login.login_erp(run_mode)
+
+        # [步骤 3] 调用基础能力库，构建“工程数”边界字典
+        # 逻辑：利用 erp_fundamental 进入工作台，把每个项目实际上有几个分期工程（_01, _02...）查清楚。
+        # 这一步至关重要！它决定了后续我们是搜到 _03 就停，还是必须搜到 _05。
+        print("\n[系统执行 3/6] 正在调用基础能力库(erp_fundamental)，获取工程数量字典...")
+
+        # 返回值结构示例: [{'项目编号': 'D1234567890', '工程数': 2}, ...]
+        enriched_data = erp_fundamental.batch_get_engineering_counts(page, target_codes)
+
+        print(f"[系统反馈] 基础边界数据构建完毕，共获取 {len(enriched_data)} 条项目的维度信息。")
+
+        # [步骤 4] 页面环境切换与导航
+        # 逻辑：fundamental 查完后可能还停留在工作台，我们需要清理标签页，确保环境纯净。
+
+        # 【修复点】不要覆盖 page 变量，仅关闭多余标签
+        if len(page.tab_ids) > 1:
+            print("[系统维护] 正在清理基础查询产生的多余标签页...")
+            page.close_tabs(page.tab_ids[1:])
+
+        # 导航至“施工委托（招标）”列表页 (注意：调用的是 _01 后缀的新模块)
+        print("\n[系统执行 4/6] 正在进入【施工委托（招标）】业务线并设置筛选条件...")
+        search_tab = erp_construction_bidding_01.setup_search_environment(page)
+
+        # [步骤 5] 核心数据提取循环 (传入 enriched_data)
+        # 逻辑：这里是将“大脑”(enriched_data) 和 “手”(search_tab) 结合的地方。
+        # 我们把带有工程数的字典传给提取器，提取器会根据 known_count 智能决定搜几次。
+        print("\n[系统执行 5/6] 开启工程维度多版本自适应提取流程 (新/老版本自动识别)...")
+
+        final_results = erp_construction_bidding_data_extractor_01.run_data_cycle(
+            page,  # 浏览器大管家 (用于获取详情页句柄)
+            search_tab,  # 列表页句柄 (用于搜索和翻页)
+            enriched_data,  # 核心数据源 (包含项目编号和工程数)
+            config.F2_OUTPUT  # 结果保存路径
+        )
+
+        print("\n" + "=" * 50)
+        print(f" [任务结算] 模块 2 执行完毕！已处理 {len(final_results)} 条项目数据。")
+        print(f" [文件落盘] 结果已保存至: {config.F2_OUTPUT}")
+        print("=" * 50)
+
+    except Exception as e:
+        # 全局异常捕获，防止程序闪退看不到报错
+        print("\n" + "!" * 50)
+        print(f"          [系统异常] 程序因以下错误终止运行：\n    {e}")
+        print("!" * 50)
+
+    finally:
+        # 生命周期终结与资源回收
+        if page is not None:
+            print("\n[系统维护] 正在执行浏览器生命周期终结与资源回收...")
+            page.quit()
+            print("[系统维护] 底层浏览器进程已安全彻底销毁。")
+
+
 def feature_3_inventory_query():
     """
     功能模块 3：盘点情况查询 业务主程序 (V2.1.0 集成版)
@@ -190,7 +279,7 @@ def main_engine_hub():
     while True:
         print("\n[主控中枢] 欢迎使用 ValkyrieEngine，请选择需要执行的业务功能：")
         print("  1. 中标金额查询（项目维度） [已上线]")
-        print("  2. 中标金额查询（工程维度） [待开发]")
+        print("  2. 中标金额查询（工程维度） [已上线]")
         print("  3. 盘点情况查询 [已上线]")
         print("  4. 结算情况查询 [待开发]")
         print("  5. 项目基础信息查询（ERP状态、总包、分包、项目经理） [待开发]")
@@ -204,12 +293,17 @@ def main_engine_hub():
             feature_1_project_bidding()
             break  # 业务执行完毕后结束程序。如需持续运行，可删除此 break 返回主菜单
 
+        elif choice == '2':
+            # [V2.2.0] 路由跳转至新功能
+            feature_2_engineering_bidding()
+            break
+
         elif choice == '3':
             # 路由跳转：分配至功能 3 对应的业务线
             feature_3_inventory_query()
             break
 
-        elif choice in ['2', '4', '5', '6']:
+        elif choice in ['4', '5', '6']:
             # 占位符：为后续开发预留的扩展接口
             print(f"\n[系统提示] 功能模块 {choice} 暂未上线，正在规划开发中，敬请期待...")
 
