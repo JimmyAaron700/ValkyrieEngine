@@ -8,7 +8,8 @@ import erp_inventory_data_extractor
 import erp_fundamental  # [V2.1.0 新增] 引入基础能力库，用于获取工程数量边界
 import erp_construction_bidding_01
 import erp_construction_bidding_data_extractor_01
-
+import erp_information
+import erp_information_data_extractor
 
 def get_run_mode():
     """
@@ -267,6 +268,70 @@ def feature_3_inventory_query():
             print("[系统维护] 底层浏览器进程已安全彻底销毁，内存已释放。")
 
 
+def feature_5_project_information():
+    """
+    [模块五业务调度中枢]：项目基础信息查询
+
+    【整体架构设计】
+    本函数遵循“配置加载 -> 身份鉴权 -> 环境导航 -> 数据生命周期循环 -> 资源确定性销毁”的标准工业流程。
+
+    【核心巧思】
+    1. 确定性资源回收 (Deterministic Resource Cleanup)：
+       通过 finally 块强制执行 page.quit()。在 RPA 场景中，底层浏览器进程的挂起是内存泄漏的主因。
+       无论业务逻辑成功、失败还是被手动中断，finally 块都能确保 OS 层级的进程被彻底销毁。
+    2. 逻辑分层调度：
+       main 模块不涉及任何具体的 DOM 提取逻辑，而是通过调用 erp_information（导航）
+       和 erp_information_data_extractor（业务逻辑）来完成任务，实现了 UI 操作与数据处理的解耦。
+    3. 运行模式注入：
+       支持从控制台动态注入浏览器运行策略（可视化 vs 静默），兼顾了“调试透明度”与“生产环境静默需求”。
+    """
+    print("\n" + "=" * 50)
+    print("       ValkyrieEngine 调度引擎：执行模块 5 业务流")
+    print("=" * 50)
+
+    page = None
+    try:
+        # 运行时策略配置
+        run_mode = get_run_mode()
+
+        # 第一阶段：数据源预处理与校验
+        print("\n[调度流 1/4] 正在加载并格式化 Excel 输入源...")
+        target_codes = data_excel.load_and_clean_data(config.F5_INPUT)
+        if not target_codes:
+            print("[调度提示] 输入源数据校验未通过，任务终止。")
+            return
+
+        # 第二阶段：浏览器初始化与身份验证
+        print("\n[调度流 2/4] 初始化浏览器引擎并执行系统级鉴权...")
+        page = erp_login.login_erp(run_mode)
+
+        # 第三阶段：业务环境初始化
+        print("\n[调度流 3/4] 正在执行页面路由寻址与环境就绪检查...")
+        workbench_tab = erp_information.setup_search_environment(page)
+
+        # 第四阶段：进入数据抓取主生命周期
+        # 此时移交控制权给 extractor 模块，开始项目级循环
+        print("\n[调度流 4/4] 启动数据提取引擎 (含自愈重试机制)...")
+        final_results = erp_information_data_extractor.run_data_cycle(
+            page,
+            workbench_tab,
+            target_codes,
+            config.F5_OUTPUT
+        )
+
+        print(f"\n[调度结算] 模块 5 流程正常结束，累计处理有效载荷：{len(final_results)} 条。")
+
+    except Exception as e:
+        # 全局异常捕获，防止子模块崩溃导致整个主程序闪退
+        print(f"\n[调度致命异常] 模块 5 逻辑链路中断：{e}")
+    finally:
+        # 【核心要求：浏览器进程强制销毁】
+        # 无论上述 try 块中发生何种异常，此处均会执行，确保物理内存资源被安全释放。
+        if page is not None:
+            print("\n[调度维护] 正在执行浏览器生命周期终结与进程资源回收...")
+            page.quit()
+            print("[调度维护] 底层浏览器进程已彻底销毁，内存句柄已释放。")
+
 def main_engine_hub():
     """
     ValkyrieEngine 主控路由中枢
@@ -282,8 +347,8 @@ def main_engine_hub():
         print("  2. 中标金额查询（工程维度） [已上线]")
         print("  3. 盘点情况查询 [已上线]")
         print("  4. 结算情况查询 [待开发]")
-        print("  5. 项目基础信息查询（ERP状态、总包、分包、项目经理） [待开发]")
-        print("  6. 项目类别查询 [待开发]")
+        print("  5. 项目基础信息查询（ERP状态、总包、分包、项目经理） [已上线]")
+        print("  6. 两重项目类别查询 [待开发]")
         print("  7. 退出系统")
 
         choice = input("\n[主控中枢] 请输入功能编号 (1-7): ").strip()
@@ -303,7 +368,12 @@ def main_engine_hub():
             feature_3_inventory_query()
             break
 
-        elif choice in ['4', '5', '6']:
+        elif choice == '5':
+            # [V2.3.0] 路由跳转至新功能
+            feature_5_project_information()
+            break
+
+        elif choice in ['4', '6']:
             # 占位符：为后续开发预留的扩展接口
             print(f"\n[系统提示] 功能模块 {choice} 暂未上线，正在规划开发中，敬请期待...")
 
